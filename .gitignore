@@ -1,0 +1,25 @@
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# game generated / local
+.synth/
+progress.json
+
+# backups
+*.bak
+game.bak/
+
+# websites - redoing, don't push
+web/
+site/
+
+# os / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
