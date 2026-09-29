@@ -7,9 +7,6 @@ don't mash - and clear each level's goal grade to unlock the next.
 
 **Repo: https://github.com/tuning4frames/yaBe**
 
-> Note: https://tabbed.hackclub.com/ is a separate project -
-> YABE BEAT isn't playable in a browser. **Download it below to play.**
-
 Made for Hack Club. 🕹️
 
 ## Download & run the game
