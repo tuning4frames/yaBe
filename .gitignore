@@ -14,6 +14,11 @@ progress.json
 *.bak
 game.bak/
 
+# pyinstaller release builds
+build/
+dist/
+*.spec
+
 # websites - redoing, don't push
 web/
 site/

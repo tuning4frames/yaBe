@@ -3,7 +3,17 @@ from pathlib import Path
 
 from game import levels
 
-PATH = Path(__file__).resolve().parent.parent / "progress.json"
+def _save_path():
+    import os
+    import sys
+    if getattr(sys, "frozen", False):
+        base = Path(os.environ.get("APPDATA", str(Path.home()))) / "yaBe"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / "progress.json"
+    return Path(__file__).resolve().parent.parent / "progress.json"
+
+
+PATH = _save_path()
 ORDER = {"D": 0, "C": 1, "B": 2, "A": 3, "S": 4}
 
 def load():

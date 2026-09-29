@@ -5,7 +5,20 @@ from array import array
 from pathlib import Path
 
 RATE = 22050
-SYNTH_DIR = Path(__file__).resolve().parent.parent / ".synth"
+
+
+def _writable_dir(name):
+    import os
+    import sys
+    if getattr(sys, "frozen", False):
+        # onefile exe: bundle dir is wiped each launch, keep saves in AppData
+        base = Path(os.environ.get("APPDATA", str(Path.home()))) / "yaBe"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / name
+    return Path(__file__).resolve().parent.parent / name
+
+
+SYNTH_DIR = _writable_dir(".synth")
 VERSION = 3
 
 CHORDS = [
