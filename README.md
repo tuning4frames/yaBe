@@ -1,4 +1,4 @@
-# YABE BEAT
+# yaBe
 
 no mouse. no tab. just keys.
 
