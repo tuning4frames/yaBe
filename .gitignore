@@ -24,6 +24,8 @@ game.bak/
 build/
 dist/
 *.spec
+# ...except the real one we build from
+!yabe-beat.spec
 
 # websites - redoing, don't push
 web/
