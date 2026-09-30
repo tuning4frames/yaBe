@@ -10,6 +10,12 @@ venv/
 .synth/
 progress.json
 
+# generated keycap exports (python export_key.py)
+exports/
+
+# unused wallpaper source art
+assets/backgrounds/
+
 # backups
 *.bak
 game.bak/

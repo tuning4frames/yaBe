@@ -1,5 +1,8 @@
 # THANK YOU FOR CHECKING OUT MY GAME <3
+import random
 import sys
+import math
+import threading
 
 import pygame
 from game import audio, chart, gui, hit, levels, progress, sprites
@@ -40,7 +43,7 @@ def tint_titlebar():
         hwnd = pygame.display.get_wm_info().get("window")
         if not hwnd:
             return
-        for attr, col in ((35, gui.BROWN), (36, gui.CREAM)):
+        for attr, col in ((35, gui.BG), (36, gui.FG)):
             ref = ctypes.c_uint((col[2] << 16) | (col[1] << 8) | col[0])
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, attr, ctypes.byref(ref), ctypes.sizeof(ref))
@@ -56,6 +59,47 @@ tick.set_volume(0.5)
 
 li = 0
 lv = levels.level(0)
+is_endless = False
+endless_style = "classic"
+endless_seed = 0
+endless_stage = 1
+endless_total = 0.0
+end_t = 0.0
+select_msg = None
+select_msg_t = 0.0
+# world look + sound follow the selected world.
+WORLD_THEMES = ("autumn", "winter", "ember")
+WORLD_STYLES = ("classic", "dark", "ember")
+
+def world_theme():
+    return WORLD_THEMES[min(levels.world_of(li), len(WORLD_THEMES) - 1)]
+
+def world_style():
+    return WORLD_STYLES[min(levels.world_of(li), len(WORLD_STYLES) - 1)]
+
+CELEB_DUR = 3.2
+celeb_t = 0.0
+celeb_world = 2
+
+# winter menu snow: plus-shaped flakes (center + 1px each way) drifting
+# down behind the level list. Menu only, never in gameplay.
+_snow_rng = random.Random(20241225)
+SNOW = [(_snow_rng.uniform(0, SIZE[0]), _snow_rng.uniform(0, SIZE[1]),
+         _snow_rng.uniform(18, 55), _snow_rng.uniform(0, 6.28),
+         _snow_rng.choice((0, 0, 1))) for _ in range(90)]
+
+
+def draw_snow():
+    now = pygame.time.get_ticks() / 1000.0
+    for x0, y0, speed, phase, shade in SNOW:
+        y = int((y0 + speed * now) % SIZE[1])
+        x = int(x0 + 8 * math.sin(now * 0.7 + phase)) % SIZE[0]
+        col = gui.FG if shade == 0 else gui.MID
+        screen.fill(col, (x, y, gui.PX, gui.PX))
+        screen.fill(col, (x, y - gui.PX, gui.PX, gui.PX))
+        screen.fill(col, (x, y + gui.PX, gui.PX, gui.PX))
+        screen.fill(col, (x - gui.PX, y, gui.PX, gui.PX))
+        screen.fill(col, (x + gui.PX, y, gui.PX, gui.PX))
 NOTES = []
 TOTAL = 0
 TOTAL_JUDGE = 0
@@ -88,7 +132,8 @@ paused = False
 paused_at = 0.0
 
 def load_level(i):
-    global lv, NOTES, TOTAL, TOTAL_JUDGE, by_lane, WINDOWS, MISS
+    global lv, NOTES, TOTAL, TOTAL_JUDGE, by_lane, WINDOWS, MISS, is_endless
+    is_endless = False
     lv = levels.level(i)
     NOTES = []
     for n in chart.chart(lv):
@@ -104,6 +149,99 @@ def load_level(i):
     MISS = hit.miss_window(WINDOWS)
     pygame.mixer.music.load(str(audio.render(lv)))
     return lv
+
+def _build_stage_notes():
+    global NOTES, TOTAL, by_lane, cursor
+    NOTES = []
+    for n in chart.chart(lv):
+        NOTES.append({
+            "t": n["t"], "lane": n["lane"], "dur": n.get("dur", 0.0),
+            "judged": False, "name": None,
+            "holding": False, "tail_judged": False, "tail_name": None,
+        })
+    TOTAL = len(NOTES)
+    by_lane = [[j for j, n in enumerate(NOTES) if n["lane"] == lane] for lane in range(LANES)]
+    cursor = [0] * LANES
+    return TOTAL + sum(1 for n in NOTES if n["dur"] > 0.001)
+
+def load_endless():
+    global lv, TOTAL_JUDGE, WINDOWS, MISS
+    global is_endless
+    # stage 1 of a fresh run. Style matches the selected world.
+    is_endless = True
+    lv = levels.endless_level(endless_style, 1, endless_seed + 1)
+    TOTAL_JUDGE = _build_stage_notes()
+    WINDOWS = hit.windows(chart.timing(lv)[0])
+    MISS = hit.miss_window(WINDOWS)
+    with _endless_lock:
+        path = audio.render(lv)
+    pygame.mixer.music.load(str(path))
+    return lv
+
+def advance_endless_stage():
+    # next stage: faster, fresh random patterns. Score, combo, health,
+    # and accuracy carry over; only the note state resets.
+    global lv, TOTAL_JUDGE, WINDOWS, MISS, endless_stage, endless_total
+    global flashes, glow, popup, health
+    endless_total += chart.length(lv)
+    endless_stage += 1
+    lv = levels.endless_level(endless_style, endless_stage,
+                              endless_seed + endless_stage)
+    TOTAL_JUDGE += _build_stage_notes()
+    WINDOWS = hit.windows(chart.timing(lv)[0])
+    MISS = hit.miss_window(WINDOWS)
+    flashes = []
+    for i in range(LANES):
+        glow[i] = 0.0
+        last_spam[i] = 0.0
+    health = min(1.0, health + 0.15)
+    popup = [f"STAGE {endless_stage}", f"{lv['bpm']} BPM", 2.5]
+    with _endless_lock:
+        path = audio.render(lv)
+    pygame.mixer.music.load(str(path))
+    pygame.mixer.music.play(start=0.0)
+    _prebuild_endless_thread(endless_style, endless_stage + 1,
+                             endless_seed + endless_stage + 1)
+
+def _prebuild_endless_stage(style, stage, seed):
+    try:
+        with _endless_lock:
+            audio.render(levels.endless_level(style, stage, seed))
+    except Exception:
+        pass
+
+
+def _prebuild_endless_thread(style, stage, seed):
+    threading.Thread(target=_prebuild_endless_stage,
+                     args=(style, stage, seed), daemon=True).start()
+
+
+def _prune_endless_cache():
+    try:
+        for f in audio.SYNTH_DIR.glob("endless_*.wav"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+_endless_lock = threading.Lock()
+
+
+def _prebuild_endless():
+    try:
+        with _endless_lock:
+            # warm stage 1 of every world variant so starting endless
+            # is instant whichever world is selected.
+            audio.render(levels.endless_level("classic", 1, 1))
+            audio.render(levels.endless_level("dark", 1, 1))
+            audio.render(levels.endless_level("ember", 1, 1))
+    except Exception:
+        pass
+
+
+threading.Thread(target=_prebuild_endless, daemon=True).start()
 
 def nearest(lane, song_t):
     idx = by_lane[lane]
@@ -273,14 +411,35 @@ def reset():
     popup = None
     paused = False
 
+def locked_message(i):
+    prev = levels.level(i - 1)
+    return f"LOCKED - clear {prev['name']} {prev['target']} first!"
+
 def start():
     global mode
     if not progress.unlocked(li):
+        global select_msg, select_msg_t
+        select_msg = locked_message(li)
+        select_msg_t = 2.0
         return
     load_level(li)
     reset()
     mode = "play"
     pygame.mixer.music.play(start=0.0)
+
+def start_endless():
+    global mode, endless_style, endless_seed, endless_stage, endless_total
+    # fresh run: random patterns every time, style matches the world.
+    endless_style = world_style()
+    endless_seed = random.randrange(1_000_000)
+    endless_stage = 1
+    endless_total = 0.0
+    _prune_endless_cache()
+    load_endless()
+    reset()
+    mode = "play"
+    pygame.mixer.music.play(start=0.0)
+    _prebuild_endless_thread(endless_style, 2, endless_seed + 2)
 
 def hint(items, cy, k=2):
     parts = []
@@ -295,28 +454,42 @@ def hint(items, cy, k=2):
         x += s.get_width() + (24 if kind == "text" else 4)
 
 def draw_select():
+    page = levels.world_of(li)
+    npages = levels.world_count()
+    if page == 1:
+        draw_snow()
     screen.blit(sprites.icon("note", 3), (CX - 220, 20))
     gui.text("YABE BEAT", (CX, 44), gui.FG, gui.big, center=True)
-    gui.text("no mouse. no tab. just keys.", (CX, 86), gui.MID, gui.small, center=True)
+    gui.text(f"WORLD {page + 1}/{npages}   no mouse. no tab. just keys.",
+             (CX, 86), gui.MID, gui.small, center=True)
 
     y = 116
-    for i, l in enumerate(levels.LEVELS):
+    for i in levels.world_range(page):
+        l = levels.LEVELS[i]
         sel = i == li
         x = 290
         lock = not progress.unlocked(i)
-        screen.blit(sprites.nine("select" if sel and not lock else "panel", (700, 80)), (x, y))
-        fg = gui.BG if sel and not lock else gui.FG
-        sub = gui.BG if sel and not lock else gui.MID
-        gui.text(f"{i + 1}  {l['name']}", (x + 28, y + 12), fg, gui.font)
-        hold_tag = "  HOLDS" if l.get("holds") else ""
-        lock_tag = "  LOCKED" if lock else ""
-        gui.text(levels.star_string(l["stars"]) + hold_tag + lock_tag, (x + 30, y + 48), sub, gui.small)
-        gui.text(f"{l['bpm']} bpm   {levels.bars(l)} bars   goal {l['target']}",
-                 (x + 200, y + 48), sub, gui.small)
+        num = (i % levels.WORLD_SIZE) + 1
         if lock:
+            # dark sunken panel + speckle overlay: unmissable at a glance.
+            # speckle stays inside the frame (4px sides, 8px bottom) so the
+            # solid border corners meet cleanly on every side.
+            screen.blit(sprites.nine("dark", (700, 80)), (x, y))
+            gui.dither((x + 4, y + 4, 692, 68), gui.BG, 2)
+            gui.text(f"{num}  [LOCKED] {l['name']}", (x + 28, y + 10), gui.MID, gui.font)
             prev = levels.level(i - 1)
-            gui.text(f"clear {prev['name']} {prev['target']}", (x + 500, y + 28), sub, gui.small)
+            gui.text(f"LOCKED - clear {prev['name']} {prev['target']} to unlock",
+                     (x + 30, y + 46), gui.FG, gui.small)
+            gui.text("LOCKED", (x + 520, y + 24), gui.FG, gui.font)
         else:
+            screen.blit(sprites.nine("select" if sel else "panel", (700, 80)), (x, y))
+            fg = gui.BG if sel else gui.FG
+            sub = gui.BG if sel else gui.MID
+            gui.text(f"{num}  {l['name']}", (x + 28, y + 12), fg, gui.font)
+            hold_tag = "  HOLDS" if l.get("holds") else ""
+            gui.text(levels.star_string(l["stars"]) + hold_tag, (x + 30, y + 48), sub, gui.small)
+            gui.text(f"{l['bpm']} bpm   {levels.bars(l)} bars   goal {l['target']}",
+                     (x + 200, y + 48), sub, gui.small)
             b = progress.best(l["id"])
             if b:
                 gui.text(f"{b['grade']}  {b['score']}", (x + 500, y + 12), fg, gui.font)
@@ -325,9 +498,37 @@ def draw_select():
                 gui.text("not played", (x + 500, y + 28), sub, gui.small)
         y += 88
 
-    hint([(["UP", "DOWN"], "choose"), (["SPACE"], "play"), (["Q"], "quit")], 596)
-    hint([(["D", "F", "J", "K"], "are your lanes")], 644)
-    hint([(["[", "]"], f"audio offset {offset_ms:+d} ms, if notes feel off-beat")], 692)
+    if select_msg is not None and select_msg_t > 0:
+        gui.text(select_msg, (CX, 574), gui.FG, gui.font, center=True, outline=gui.BG)
+    else:
+        hint([(["LEFT", "RIGHT"], "world"), (["UP", "DOWN"], "choose"),
+              (["SPACE"], "play"), (["Q"], "quit")], 574)
+
+    eb = progress.best(levels.ENDLESS_ID)
+    ebest = f"   best {eb['score']} ({eb['grade']})" if eb else ""
+    gui.text(f"[E] ENDLESS - survive!{ebest}", (CX, 610),
+             gui.MID, gui.small, center=True)
+
+    hint([(["D", "F", "J", "K"], "are your lanes"),
+          (["[", "]"], f"audio offset {offset_ms:+d} ms, if notes feel off-beat")], 652)
+
+def spawn_celebration():
+    pass
+
+def update_celebration(dt):
+    global celeb_t
+    celeb_t = max(0.0, celeb_t - dt)
+
+
+def draw_celebration():
+    # dim only, no panel: outlined text floats over the level list.
+    gui.dither((0, 0) + SIZE, (0, 0, 0), 3, cell=1)
+    gui.text(f"WORLD {celeb_world}", (CX, 300), gui.FG, gui.big, center=True,
+             outline=gui.BG)
+    gui.text("UNLOCKED!", (CX, 350), gui.FG, gui.big, center=True,
+             outline=gui.BG)
+    gui.text("5 new levels await  -  press any key", (CX, 410),
+             gui.MID, gui.small, center=True, outline=gui.BG)
 
 def draw_pause():
     gui.dither((0, 0) + SIZE, (0, 0, 0), 3, cell=1)
@@ -457,8 +658,14 @@ def draw_play(song_t):
     live = sum(weights) / judged * 100 if judged else 100.0
     gui.text(f"{score}", (60, 26), gui.FG, gui.big)
     gui.text(f"{live:.1f}%", (CX, 24), gui.FG, gui.font, center=True)
-    gui.text(f"{lv['name']}  {levels.star_string(lv['stars'])}", (CX, 50),
-             gui.MID, gui.small, center=True)
+    if is_endless:
+        tot = endless_total + max(0.0, song_t)
+        mm, ss = int(tot) // 60, int(tot) % 60
+        gui.text(f"ENDLESS {endless_stage}  {lv['bpm']} BPM  survive!  {mm}:{ss:02d}",
+                 (CX, 50), gui.MID, gui.small, center=True)
+    else:
+        gui.text(f"{lv['name']}  {levels.star_string(lv['stars'])}", (CX, 50),
+                 gui.MID, gui.small, center=True)
     frac = min(1.0, song_time() / chart.length(lv))
     screen.blit(sprites.bar(FIELD[2], frac), (FIELD[0], FIELD[1] - 34))
 
@@ -503,6 +710,15 @@ def draw_result():
         gui.text(label, (CX - 220, y), gui.MID, gui.font)
         gui.text(val, (CX + 120, y), gui.FG, gui.font)
         y += 34
+    if is_endless:
+        mm, ss = int(max(0.0, end_t)) // 60, int(max(0.0, end_t)) % 60
+        gui.text(f"survived {mm}:{ss:02d}  -  reached stage {endless_stage}",
+                 (CX, 574), gui.FG, gui.font, center=True)
+        items = [(["SPACE"], "retry")]
+        items.append((["Q"], "quit"))
+        hint(items, 630)
+        gui.text("ESC back to levels", (CX, 686), gui.MID, gui.small, center=True)
+        return
     target = lv["target"]
     met = not failed and progress.ORDER.get(g, 0) >= progress.ORDER.get(target, 0)
     gui.text(f"goal {target}  {'cleared' if met else 'not cleared'}",
@@ -530,13 +746,16 @@ while running:
             window = pygame.display.set_mode((0, 0) if fullscreen else SIZE,
                                              pygame.FULLSCREEN if fullscreen else pygame.RESIZABLE)
             tint_titlebar()
+        elif celeb_t > 0:
+            celeb_t = 0.0
+            continue
         elif mode == "play":
             if paused:
                 if e.key in (pygame.K_ESCAPE, pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER):
                     toggle_pause()
                 elif e.key == pygame.K_r:
                     toggle_pause()
-                    start()
+                    start_endless() if is_endless else start()
                 elif e.key == pygame.K_q:
                     to_select()
                 continue
@@ -551,30 +770,59 @@ while running:
             running = False
         elif mode == "select":
             if e.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER):
-                if progress.unlocked(li):
-                    start()
-            elif pygame.K_1 <= e.key <= pygame.K_9 and e.key - pygame.K_1 < levels.count():
-                li = e.key - pygame.K_1
-            elif e.key in (pygame.K_UP, pygame.K_w):
-                li = max(0, li - 1)
-            elif e.key in (pygame.K_DOWN, pygame.K_s):
-                li = min(levels.count() - 1, li + 1)
+                start()
+            elif e.key == pygame.K_e:
+                start_endless()
+            elif pygame.K_1 <= e.key <= pygame.K_5:
+                want = levels.world_of(li) * levels.WORLD_SIZE + (e.key - pygame.K_1)
+                if want < levels.count():
+                    li = want
+            elif e.key in (pygame.K_UP, pygame.K_w, pygame.K_DOWN, pygame.K_s):
+                # move within this world only, wrapping 5->1 and 1->5.
+                world = levels.world_of(li)
+                wstart = world * levels.WORLD_SIZE
+                size = len(levels.world_range(world))
+                pos = (li - wstart + (-1 if e.key in (pygame.K_UP, pygame.K_w) else 1)) % size
+                li = wstart + pos
+            elif e.key in (pygame.K_LEFT, pygame.K_PAGEUP):
+                li = ((levels.world_of(li) - 1) % levels.world_count()) * levels.WORLD_SIZE
+            elif e.key in (pygame.K_RIGHT, pygame.K_PAGEDOWN):
+                li = ((levels.world_of(li) + 1) % levels.world_count()) * levels.WORLD_SIZE
             elif e.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET):
                 offset_ms += 10 if e.key == pygame.K_RIGHTBRACKET else -10
                 progress.set_offset(offset_ms)
         elif mode == "result":
             if e.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER):
-                start()
-            elif e.key == pygame.K_n and li + 1 < levels.count():
+                start_endless() if is_endless else start()
+            elif e.key == pygame.K_n and not is_endless and li + 1 < levels.count():
                 li += 1
                 start()
             elif e.key == pygame.K_ESCAPE:
                 reset()
                 mode = "select"
 
+    # world 2 runs the winter palette, everything else autumn.
+    if gui.set_theme(world_theme()):
+        tint_titlebar()
     gui.backdrop()
+    if select_msg_t > 0:
+        select_msg_t -= dt
+        if select_msg_t <= 0:
+            select_msg = None
+    if mode == "select" and celeb_t <= 0 and levels.world_count() > 1:
+        for w in range(1, levels.world_count()):
+            if progress.unlocked(w * levels.WORLD_SIZE) and not progress.world_seen(w):
+                progress.mark_world_seen(w)
+                celeb_world = w + 1
+                celeb_t = CELEB_DUR
+                spawn_celebration()
+                break
+    if celeb_t > 0:
+        update_celebration(dt)
     if mode == "select":
         draw_select()
+        if celeb_t > 0:
+            draw_celebration()
     elif mode == "play":
         st = song_time()
         for n in NOTES:
@@ -607,11 +855,16 @@ while running:
                         tail_fail(n, "DROP")
                         if was_popup is not None and n != NOTES[-1]:
                             pass
-            pygame.mixer.music.stop()
-            failed = health <= 0.0
-            mode = "result"
-            acc = hit.accuracy(weights, TOTAL_JUDGE if TOTAL_JUDGE else TOTAL)
-            new_best = not failed and progress.record(lv, score, hit.grade(acc), acc)
+            if is_endless and health > 0.0:
+                # bar filled: level up into the next faster stage.
+                advance_endless_stage()
+            else:
+                pygame.mixer.music.stop()
+                failed = health <= 0.0
+                end_t = (endless_total + st) if is_endless else st
+                mode = "result"
+                acc = hit.accuracy(weights, TOTAL_JUDGE if TOTAL_JUDGE else TOTAL)
+                new_best = not failed and progress.record(lv, score, hit.grade(acc), acc)
     else:
         draw_result()
     ww, wh = window.get_size()

@@ -1,15 +1,14 @@
-from pathlib import Path
-
 import pygame
 
-from game import gui
+from game import gui, paths
 
-ROOT = Path(__file__).resolve().parent.parent / "assets" / "SGQ_ui"
+ROOT = paths.resources() / "assets" / "SGQ_ui"
 
 KEYS = {
     "D": (77, 127), "F": (97, 127), "J": (157, 127), "K": (177, 127),
+    "A": (37, 127),
     "Q": (32, 106), "R": (92, 106), "N": (142, 148), "[": (232, 106), "]": (252, 106),
-    "1": (24, 85), "5": (104, 85),
+    "1": (24, 85), "5": (104, 85), "2": (44, 85), "3": (64, 85),
     "UP": (62, 198), "LEFT": (40, 218), "DOWN": (62, 218), "RIGHT": (84, 218),
     "BLANK": (6, 200),
 }
@@ -37,6 +36,9 @@ def sheet(name):
         img = pygame.image.load(str(ROOT / sub / f"{name}.png")).convert_alpha()
         px = pygame.PixelArray(img)
         px.replace(gui.SHEET_BROWN, gui.BROWN)
+        px.replace(gui.SHEET_CREAM, gui.CREAM)
+        px.replace(gui.SHEET_SAGE, gui.SAGE)
+        px.replace(gui.SHEET_DEEP, gui.DEEP)
         del px
         _sheets[name] = img
     return _sheets[name]
@@ -53,7 +55,7 @@ def key(name, pressed=False, k=4):
         if name in WIDE_KEYS:
             src = _cut("keyboard", WIDE_KEYS[name])
         else:
-            x, y = KEYS[name]
+            x, y = KEYS.get(name, KEYS["BLANK"])
             src = _cut("keyboard", (x, y, 19, 18))
         if pressed:
             w, h = src.get_size()

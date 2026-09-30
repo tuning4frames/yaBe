@@ -1,27 +1,24 @@
 import json
-from pathlib import Path
 
-from game import levels
+from game import levels, paths
 
-def _save_path():
-    import os
-    import sys
-    if getattr(sys, "frozen", False):
-        base = Path(os.environ.get("APPDATA", str(Path.home()))) / "yaBe"
-        base.mkdir(parents=True, exist_ok=True)
-        return base / "progress.json"
-    return Path(__file__).resolve().parent.parent / "progress.json"
-
-
-PATH = _save_path()
+PATH = paths.user_data() / "progress.json"
 ORDER = {"D": 0, "C": 1, "B": 2, "A": 3, "S": 4}
 
 def load():
     if PATH.exists():
         try:
-            return json.loads(PATH.read_text())
+            data = json.loads(PATH.read_text())
         except json.JSONDecodeError:
-            pass
+            return {}
+        # id rename: equinox -> leafy. Carry any existing best over.
+        if "equinox" in data and "leafy" not in data:
+            data["leafy"] = data.pop("equinox")
+            try:
+                save(data)
+            except OSError:
+                pass
+        return data
     return {}
 
 def save(data):
@@ -66,4 +63,28 @@ def offset():
 def set_offset(ms):
     data = load()
     data["_offset_ms"] = ms
+    save(data)
+
+def world_seen(w):
+    # w is the 0-based world index. World 0 needs no celebration.
+    if w <= 0:
+        return True
+    data = load()
+    if f"_world{w}_seen" in data:
+        return bool(data[f"_world{w}_seen"])
+    # legacy flag from when only world 2 existed.
+    if w == 1:
+        return bool(data.get("_world2_seen", False))
+    return False
+
+def mark_world_seen(w):
+    data = load()
+    data[f"_world{w}_seen"] = True
+    save(data)
+
+def replay_world(w):
+    data = load()
+    data[f"_world{w}_seen"] = False
+    if w == 1:
+        data["_world2_seen"] = False
     save(data)

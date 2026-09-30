@@ -1,15 +1,41 @@
-from pathlib import Path
-
 import pygame
-from game import hit
+from game import hit, paths
 
-FONT = str(Path(__file__).resolve().parent.parent / "fonts" / "BoldPixels.ttf")
+FONT = str(paths.resources() / "fonts" / "BoldPixels.ttf")
 
 SHEET_BROWN = (88, 68, 34)
-BROWN = (30, 22, 10)
-DEEP = (94, 133, 73)
-SAGE = (120, 164, 106)
-CREAM = (212, 210, 155)
+SHEET_DEEP = (94, 133, 73)
+SHEET_SAGE = (120, 164, 106)
+SHEET_CREAM = (212, 210, 155)
+
+# world palettes: autumn brown/green/cream, winter darkblue/blue/white,
+# ember red/orange/gold.
+THEMES = {
+    "autumn": {
+        "BROWN": (30, 22, 10),
+        "DEEP": (94, 133, 73),
+        "SAGE": (120, 164, 106),
+        "CREAM": (212, 210, 155),
+    },
+    "winter": {
+        "BROWN": (17, 32, 60),
+        "DEEP": (55, 105, 160),
+        "SAGE": (135, 195, 235),
+        "CREAM": (240, 246, 255),
+    },
+    "ember": {
+        "BROWN": (52, 22, 12),
+        "DEEP": (150, 74, 32),
+        "SAGE": (225, 145, 60),
+        "CREAM": (255, 236, 190),
+    },
+}
+THEME = "autumn"
+
+BROWN = THEMES[THEME]["BROWN"]
+DEEP = THEMES[THEME]["DEEP"]
+SAGE = THEMES[THEME]["SAGE"]
+CREAM = THEMES[THEME]["CREAM"]
 
 BG = BROWN
 FG = CREAM
@@ -34,6 +60,46 @@ LANE_COLORS = (SAGE, SAGE, SAGE, SAGE)
 JUDGE_COLOR = {
     "PERFECT": CREAM, "GREAT": SAGE, "GOOD": DEEP, "MISS": DEEP,
 }
+
+def set_theme(name):
+    # swap the world palette. Returns True when it changed so callers
+    # can re-tint things like the window titlebar. Clears all cached
+    # tiles, backdrops, and sprite sheets so they rebuild in the new
+    # colors.
+    global THEME, BROWN, DEEP, SAGE, CREAM
+    global BG, FG, MID, LOW
+    global INK, DARK, LIGHT, PAPER, LANE_BG, LANE_LINE
+    global WHITE, GREY, DIM, GOLD, GREEN, PINK, CYAN
+    global LANE_COLORS, JUDGE_COLOR, _backdrop
+    if name not in THEMES or name == THEME:
+        return False
+    THEME = name
+    pal = THEMES[name]
+    BROWN, DEEP, SAGE, CREAM = pal["BROWN"], pal["DEEP"], pal["SAGE"], pal["CREAM"]
+    BG, FG, MID, LOW = BROWN, CREAM, SAGE, DEEP
+    INK = FG
+    DARK = MID
+    LIGHT = LOW
+    PAPER = BG
+    LANE_BG = BG
+    LANE_LINE = LOW
+    WHITE = FG
+    GREY = MID
+    DIM = LOW
+    GOLD = FG
+    GREEN = FG
+    PINK = MID
+    CYAN = FG
+    LANE_COLORS = (SAGE, SAGE, SAGE, SAGE)
+    JUDGE_COLOR = {
+        "PERFECT": CREAM, "GREAT": SAGE, "GOOD": DEEP, "MISS": DEEP,
+    }
+    _tiles.clear()
+    _backdrop = None
+    from game import sprites
+    sprites._sheets.clear()
+    sprites._cache.clear()
+    return True
 
 PX = 2
 
@@ -87,7 +153,7 @@ def _tile(col, level, cell):
         _tiles[key] = s
     return _tiles[key]
 
-def dither(rect, col, level, dst=None, cell=PX):
+def dither(rect, col, level, dst=None, cell=PX, ox=0, oy=0):
     dst = dst or scr
     if level >= 4:
         dst.fill(col, rect)
@@ -99,8 +165,12 @@ def dither(rect, col, level, dst=None, cell=PX):
     tw, th = tile.get_size()
     old = dst.get_clip()
     dst.set_clip(rect.clip(old))
-    for y in range(rect.top - rect.top % th, rect.bottom, th):
-        for x in range(rect.left - rect.left % tw, rect.right, tw):
+    # ox/oy shift the tile phase, so changing them over time makes the
+    # dither crawl. The extra -th/-tw keeps coverage gap-free at any phase.
+    y0 = rect.top - rect.top % th + (oy % th) - th
+    x0 = rect.left - rect.left % tw + (ox % tw) - tw
+    for y in range(y0, rect.bottom, th):
+        for x in range(x0, rect.right, tw):
             dst.blit(tile, (x, y))
     dst.set_clip(old)
 

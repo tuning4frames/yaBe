@@ -4,22 +4,11 @@ import wave
 from array import array
 from pathlib import Path
 
+from game import paths
+
 RATE = 22050
-
-
-def _writable_dir(name):
-    import os
-    import sys
-    if getattr(sys, "frozen", False):
-        # onefile exe: bundle dir is wiped each launch, keep saves in AppData
-        base = Path(os.environ.get("APPDATA", str(Path.home()))) / "yaBe"
-        base.mkdir(parents=True, exist_ok=True)
-        return base / name
-    return Path(__file__).resolve().parent.parent / name
-
-
-SYNTH_DIR = _writable_dir(".synth")
-VERSION = 3
+SYNTH_DIR = paths.user_data() / ".synth"
+VERSION = 5
 
 CHORDS = [
     (57, 60, 64),
@@ -114,12 +103,30 @@ def mix(buf, start, samples, gain=1.0):
         buf[i] += s * gain
         i += 1
 
-def render(lv, force=False):
-    from game import chart
+def _cache_tag(lv):
+    # endless stages share one id (so progress keys stay put) but differ
+    # by style, stage seed, and bpm. Tag the filename so variants don't
+    # collide. Story levels are untouched.
+    if not lv.get("endless"):
+        return ""
+    tag = "_" + str(lv.get("style", "classic"))
+    if lv.get("style2_at") is not None:
+        tag += f"+{lv.get('style2', 'dark')}{lv['style2_at']}"
+    tag += f"_s{lv.get('seed', 1337)}"
+    return tag
 
-    out = SYNTH_DIR / f"{lv['id']}_{lv['bpm']:g}_v{VERSION}.wav"
+
+def render(lv, force=False):
+    from game import chart, levels
+
+    out = SYNTH_DIR / f"{lv['id']}_{lv['bpm']:g}_v{VERSION}{_cache_tag(lv)}.wav"
     if out.exists() and not force:
         return out
+    # Reuse a prebuilt wav shipped with the game (e.g. inside a frozen
+    # .exe) so first launch doesn't have to synthesize everything.
+    prebuilt = paths.resources() / ".synth" / out.name
+    if prebuilt != out and prebuilt.exists() and not force:
+        return prebuilt
 
     beat, bar, step = chart.timing(lv)
     random.seed(7)
@@ -128,17 +135,21 @@ def render(lv, force=False):
 
     drums = {"kick": kick(), "snare": snare()}
     hat_c, hat_o = hat(), hat(True)
+    main_bars = levels.main_bars(lv)
 
     for t, kind, payload in chart.events(lv):
         start = int(t * RATE)
+        # mix gains follow the bar's style (endless morphs mid-song).
+        song_bi = int(t // bar) - levels.INTRO_BARS
+        st = levels.style_of(lv, song_bi if 0 <= song_bi < main_bars else None)
         if kind == "kick":
             mix(buf, start, drums["kick"], 0.85)
         elif kind == "snare":
             mix(buf, start, drums["snare"], 0.45)
         elif kind == "hat":
-            mix(buf, start, hat_o if payload else hat_c, 0.22)
+            mix(buf, start, hat_o if payload else hat_c, st["hat_gain"])
         elif kind == "bass":
-            mix(buf, start, bass(payload, beat * 0.9), 0.34)
+            mix(buf, start, bass(payload, beat * 0.9), st["bass_gain"])
         elif kind == "lead":
             if isinstance(payload, (list, tuple)):
                 midi, hold_dur = payload

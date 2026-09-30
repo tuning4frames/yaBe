@@ -7,13 +7,13 @@ def timing(lv):
     beat = 60.0 / lv["bpm"]
     return beat, beat * 4, beat / 4
 
-def chord(bi):
-    roots = (57, 53, 48, 55)
+def chord(bi, lv, song_bi=None):
+    roots = levels.style_of(lv, song_bi)["roots"]
     base = roots[bi % len(roots)]
     return (base, base + 3, base + 7)
 
-def lane_pitch(bi, lane):
-    ch = chord(bi)
+def lane_pitch(bi, lane, lv, song_bi=None):
+    ch = chord(bi, lv, song_bi)
     return (ch[0], ch[1], ch[2], ch[0] + 12)[lane] + 12
 
 def _holds_lookup(lv):
@@ -30,37 +30,39 @@ def _holds_lookup(lv):
 
 def _bar_events(bi, lv):
     ev = []
-    ch = chord(bi)
-    beat, _, step_dur = timing(lv)
     main_from = levels.INTRO_BARS
     main_to = levels.INTRO_BARS + levels.main_bars(lv)
     in_main = main_from <= bi < main_to
     in_outro = bi >= main_to
+    song_bi = bi - main_from if in_main else None
+    st = levels.style_of(lv, song_bi)
+    ch = chord(bi, lv, song_bi)
+    beat, _, step_dur = timing(lv)
     pat = levels.pattern(lv, bi - main_from) if in_main else None
     rest = in_main and not pat.strip(".")
 
     if bi < levels.INTRO_BARS:
         if bi == levels.INTRO_BARS - 1:
-            for s in (0, 4, 8, 12):
+            for s in st["kick"]:
                 ev.append((s, "kick", None))
-            for s in (4, 12):
+            for s in st["snare"]:
                 ev.append((s, "snare", None))
     elif in_outro or rest:
-        for s in (0, 4, 8, 12):
+        for s in st["kick"]:
             ev.append((s, "kick", None))
         if bi % 2 == 1:
-            for s in (4, 12):
+            for s in st["snare"]:
                 ev.append((s, "snare", None))
     else:
-        for s in (0, 4, 8, 12):
+        for s in st["kick"]:
             ev.append((s, "kick", None))
-        for s in (4, 12):
+        for s in st["snare"]:
             ev.append((s, "snare", None))
 
-    for s in range(0, 16, 2):
+    for s in range(0, 16, st["hat_every"]):
         ev.append((s, "hat", s == 14 and bi % 4 == 3))
 
-    for s in (0, 6, 10, 14):
+    for s in st["bass"]:
         ev.append((s, "bass", ch[0] - 12))
 
     if in_main:
@@ -71,7 +73,7 @@ def _bar_events(bi, lv):
             for lane in levels.lanes_of(c):
                 nsteps = holds.get((song_bi, s, lane), 0)
                 dur = max(0.0, nsteps * step_dur)
-                ev.append((s, "lead", (lane_pitch(bi, lane), dur)))
+                ev.append((s, "lead", (lane_pitch(bi, lane, lv, song_bi), dur)))
                 ev.append((s, "note", (lane, dur)))
                 emitted.add((s, lane))
         # holds that have no matching tap still spawn a hold note
@@ -79,7 +81,7 @@ def _bar_events(bi, lv):
             if b != song_bi or (s, lane) in emitted:
                 continue
             dur = max(0.0, nsteps * step_dur)
-            ev.append((s, "lead", (lane_pitch(bi, lane), dur)))
+            ev.append((s, "lead", (lane_pitch(bi, lane, lv, song_bi), dur)))
             ev.append((s, "note", (lane, dur)))
     return ev
 
